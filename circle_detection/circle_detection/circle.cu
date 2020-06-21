@@ -2,6 +2,7 @@
 #include <memory>
 #include <iostream>
 #include <stdio.h>
+#include <time.h>
 
 // CUDA-C includes
 #include <cuda.h>
@@ -14,6 +15,31 @@
 ////////////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv)
 {
+	printf("test\n");
+	const int num_vert = 629;
+	char const* const inputFile = argv[1];
+	FILE* file = fopen(inputFile, "r");
+	int vert_x[num_vert];
+	int vert_y[num_vert];
+	printf("test\n");
+	
+	char line[256];
+	int i = 0;
+	while (fgets(line, sizeof(line), file) != NULL) {
+		sscanf(line, "%d %d", &vert_x[i], &vert_y[i]);
+		++i;
+	}
+	fclose(file);
+	printf("test\n");
+
+
+	//Sanity check for read:
+	srand(time(NULL));
+	int rand_i = rand() % num_vert;
+	printf("Coordinates on random index %d are (%d,%d)\n", rand_i, vert_x[rand_i], vert_y[rand_i]);
+	printf("Coordinates on first index are (%d,%d)\n", vert_x[0], vert_y[0]);
+	printf("Coordinates on last index are (%d,%d)\n", vert_x[num_vert - 1], vert_y[num_vert - 1]);
+
 	int deviceCount = 0;
 	cudaError_t error_id = cudaGetDeviceCount(&deviceCount);
 
