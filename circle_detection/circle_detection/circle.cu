@@ -14,6 +14,16 @@
 #define threads_per_block 1024
 #define num_vert 629
 
+/* GPU Device kernel for an individual Ransac interation. 
+   d_centerx: output array of x coordinates of circle centers for each executing thread.
+   d_centery: output array of y coordinates of circle centers for each executing thread.
+   d_centerrad: output array of radius lengths for each executing thread.
+   d_eval: output array of evaluation of each thread's circle, i.e: how many points does it go across.
+   d_vert_x: input array of the x coordinates of the given contour points.
+   d_vert_y: input array of the y cooridnates of the given contour points.
+   d_randids: randomized indices that each thread uses for their own calculations.
+   d_n: number of contour points.
+*/
 __global__ void ransac_circle(int* d_centerx, int* d_centery, float* d_centerrad, int* d_eval, int* d_vert_x, int* d_vert_y, int* d_randinds, int d_n) {
 	int index = threadIdx.x + blockIdx.x * blockDim.x;	int i1 = d_randinds[index];
 	int i2 = d_randinds[index + 1];
@@ -55,7 +65,7 @@ __global__ void ransac_circle(int* d_centerx, int* d_centery, float* d_centerrad
 ////////////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv)
 {
-	printf("test\n");
+	/* Parse the input file and fill up our host-side coordinate arrays. */
 	char const* const inputFile = argv[1];
 	FILE* file = fopen(inputFile, "r");
 	int vert_x[num_vert];
@@ -64,24 +74,21 @@ int main(int argc, char** argv)
 	char line[256];
 	int i = 0;
 
-	printf("test\n");
 	while (fgets(line, sizeof(line), file) != NULL) {
 		sscanf(line, "%d %d", &vert_x[i], &vert_y[i]);
 		++i;
 	}
 
-	printf("test\n");
 	fclose(file);
 
-	printf("test\n");
-
-	//Sanity check for read:
+	/* Perform a sanity-check for the input parsing as a form of quick testing. */
 	srand(time(NULL));
 	int rand_i = rand() % num_vert;
 	printf("Coordinates on random index %d are (%d,%d)\n", rand_i, vert_x[rand_i], vert_y[rand_i]);
 	printf("Coordinates on first index are (%d,%d)\n", vert_x[0], vert_y[0]);
 	printf("Coordinates on last index are (%d,%d)\n", vert_x[num_vert - 1], vert_y[num_vert - 1]);
 
+	/* Get available compatible GPU device information. */
 	int deviceCount = 0;
 	cudaError_t error_id = cudaGetDeviceCount(&deviceCount);
 
@@ -118,7 +125,7 @@ int main(int argc, char** argv)
 
 	}
 
-	printf("test\n");
+	/* Initialize and allocate the host side variables */
 
 	int ts = threads * sizeof(int);
 	int fs = threads * sizeof(float);
@@ -128,6 +135,8 @@ int main(int argc, char** argv)
 	float* h_centerrad = (float*)malloc(fs);
 	int* h_eval = (int*)malloc(ts);
 	int* h_randinds = (int*)malloc(ts * 3);
+
+	/* Initialize and allocate the device side variables. */
 
 	int* d_centerx;
 	int* d_centery;
@@ -145,6 +154,8 @@ int main(int argc, char** argv)
 	cudaMalloc((void**)& d_vert_y, num_vert);
 	cudaMalloc((void**)& d_randinds, ts * 3);
 
+	/* Generate the random indices that each thread will work with. Device code has no access to the rand() function so this is a workaround. */
+
 	for (int i = 0; i < threads; ++i) {
 		int i1 = rand() % num_vert;
 		int i2 = rand() % num_vert;
@@ -160,17 +171,23 @@ int main(int argc, char** argv)
 		h_randinds[i * 3 + 2] = i3;
 	}
 
-	printf("test\n");
+	/* Pass the input parameters from host to device. */
 	cudaMemcpy(d_vert_x, vert_x, num_vert, cudaMemcpyHostToDevice);
 	cudaMemcpy(d_vert_y, vert_y, num_vert, cudaMemcpyHostToDevice);
 	cudaMemcpy(d_randinds, h_randinds, (ts * 3), cudaMemcpyHostToDevice);
 
+	/* Run RANSAC. */
+
 	ransac_circle << <threads / threads_per_block, threads_per_block >> > (d_centerx, d_centery, d_centerrad, d_eval, d_vert_x, d_vert_y, d_randinds, num_vert);
+
+	/* Extract the values from the corresponding device arrays. */
 
 	cudaMemcpy(h_centerx, d_centerx, ts, cudaMemcpyDeviceToHost);
 	cudaMemcpy(h_centery, d_centery, ts, cudaMemcpyDeviceToHost);
 	cudaMemcpy(h_centerrad, d_centerrad, fs, cudaMemcpyDeviceToHost);
 	cudaMemcpy(h_eval, d_eval, ts, cudaMemcpyDeviceToHost);
+
+	/* Look for the best thread result. */
 
 	int best_eval = h_eval[0];
 	int best_eval_index = 0;
