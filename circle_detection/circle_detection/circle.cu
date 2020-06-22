@@ -35,26 +35,26 @@ __global__ void ransac_circle(int* d_centerx, int* d_centery, float* d_centerrad
 	int y2 = d_vert_y[i2];
 	int y3 = d_vert_y[i3];
 
-	/*a b c represent the variable independent coefficients in the circle equation (that only depend on circle center and radius).*/
-	int a = x1 * (y2 - y3) - y1 * (x2 - x3) + x2 * y3 - x3 * y2;
-	int b = (x1 * x1 + y1 * y1) * (y3 - y2) + (x2 * x2 + y2 * y2) * (y1 - y3) + (x3 * x3 + y3 * y3) * (y2 - y1);
-	int c = (x1 * x1 + y1 * y1) * (x2 - x3) + (x2 * x2 + y2 * y2) * (x3 - x1) + (x3 * x3 + y3 * y3) * (x1 - x2);
+	/* Effectively calculate the circle details using equations derived from the determinants. For more information look at blogs like http://mathforum.org/library/drmath/view/54323.html */
 
-	/*these a b c variables are now used to get the original circle parameters back from the circle equation coefficients.*/
-	float x = -b / (2 * a);
-	float y = -c / (2 * a);
-	float r = sqrt((float)((x - x1) * (x - x1) + (y - y1) * (y - y1)));
-	d_centerx[index] = (int)x;
-	d_centery[index] = (int)y;
-	d_centerrad[index] = r;
+	float temp = x2 * x2 + y2 * y2;
+	float bc = (x1 * x1 + y1 * y1 - temp) / 2;
+	float cd = (temp - x3 * x3 - y3 * y3) / 2;
+	float det = (x1 - x2) * (y2 - y3) - (x2 - x3) * (y1 - y2);
 
-	/*calculate the fourth coefficient that was unused thus far, and count how many points aline.*/
-	int d = (int)((x * x) + (y * y) - ((x - x1) * (x - x1) + (y - y1) * (y - y1)));
+	float cx = (bc * (y2 - y3) - cd * (y1 - y2)) / det;
+	float cy = ((x1 - x2) * cd - (x2 - x3) * bc) / det;
+	float radius = sqrt((cx - x1) * (cx - x1) + (cy - y1) * (cy - y1));
+
+	d_centerx[index] = (int)cx;
+	d_centery[index] = (int)cy;
+	d_centerrad[index] = radius;
+
 	int count = 0;
 	for (int i = 0; i < d_n; i++) {
 		int x_i = d_vert_x[i];
 		int y_i = d_vert_y[i];
-		if (a * (x_i * x_i + y_i * y_i) + b * x + c * y + d == 0) count++;
+		if (((x_i - cx) * (x_i - cx) + (y_i - cy) * (y_i - cy)) - radius * radius == 0) count++;
 	}
 	d_eval[index] = count;
 
@@ -129,6 +129,7 @@ int main(int argc, char** argv)
 
 	int ts = threads * sizeof(int);
 	int fs = threads * sizeof(float);
+	int ns = num_vert * sizeof(int);
 
 	int* h_centerx = (int*)malloc(ts);
 	int* h_centery = (int*)malloc(ts);
@@ -150,8 +151,8 @@ int main(int argc, char** argv)
 	cudaMalloc((void**)& d_centery, ts);
 	cudaMalloc((void**)& d_centerrad, fs);
 	cudaMalloc((void**)& d_eval, ts);
-	cudaMalloc((void**)& d_vert_x, num_vert);
-	cudaMalloc((void**)& d_vert_y, num_vert);
+	cudaMalloc((void**)& d_vert_x, ns);
+	cudaMalloc((void**)& d_vert_y, ns);
 	cudaMalloc((void**)& d_randinds, ts * 3);
 
 	/* Generate the random indices that each thread will work with. Device code has no access to the rand() function so this is a workaround. */
@@ -172,8 +173,8 @@ int main(int argc, char** argv)
 	}
 
 	/* Pass the input parameters from host to device. */
-	cudaMemcpy(d_vert_x, vert_x, num_vert, cudaMemcpyHostToDevice);
-	cudaMemcpy(d_vert_y, vert_y, num_vert, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_vert_x, vert_x, ns, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_vert_y, vert_y, ns, cudaMemcpyHostToDevice);
 	cudaMemcpy(d_randinds, h_randinds, (ts * 3), cudaMemcpyHostToDevice);
 
 	/* Run RANSAC. */
